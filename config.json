@@ -1,0 +1,11 @@
+{
+  "target_directory": "./data/test_sandbox",
+  "mode": "Observe",
+  "canary_file_types": [".docx", ".xlsx", ".pdf", ".txt"],
+  "incident_window_seconds": 3,
+  "confidence_thresholds": {
+    "low": 20,
+    "medium": 50,
+    "high": 80
+  }
+}

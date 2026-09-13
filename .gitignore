@@ -1,0 +1,14 @@
+# Python environments and bytecode
+venv/
+env/
+__pycache__/
+*.pyc
+
+# Editor settings
+.vscode/
+.idea/
+
+# Security project data, logs, and incident evidence
+data/
+*.log
+incident_records/
