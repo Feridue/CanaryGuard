@@ -1,40 +1,87 @@
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
+from datetime import datetime
 import os
 
 
 class FileMonitorHandler(FileSystemEventHandler):
     """Handle file-system events."""
 
+    def __init__(self, event_callback=None, allowed_extensions=None):
+        super().__init__()
+        self.event_callback = event_callback
+        self.allowed_extensions = allowed_extensions or []
+
+    def _is_valid_file(self, file_path):
+        """Check whether the file should be monitored."""
+        if not os.path.isfile(file_path):
+            return False
+
+        if not self.allowed_extensions:
+            return True
+
+        return os.path.splitext(file_path)[1].lower() in self.allowed_extensions
+
+    def _handle_event(self, event_type, file_path):
+        """Create a structured event."""
+        if not self._is_valid_file(file_path):
+            return
+
+        event_data = {
+            "event_type": event_type,
+            "file_path": file_path,
+            "timestamp": datetime.now().isoformat()
+        }
+
+        print(
+            f"[{event_type}] {file_path} | "
+            f"{event_data['timestamp']}"
+        )
+
+        if self.event_callback:
+            self.event_callback(event_data)
+
     def on_created(self, event):
         if not event.is_directory:
-            print(f"[CREATED] {event.src_path}")
+            self._handle_event("CREATED", event.src_path)
 
     def on_modified(self, event):
         if not event.is_directory:
-            print(f"[MODIFIED] {event.src_path}")
+            self._handle_event("MODIFIED", event.src_path)
 
     def on_deleted(self, event):
         if not event.is_directory:
-            print(f"[DELETED] {event.src_path}")
+            self._handle_event("DELETED", event.src_path)
 
     def on_moved(self, event):
         if not event.is_directory:
-            print(f"[MOVED] {event.src_path} -> {event.dest_path}")
+            self._handle_event("MOVED", event.dest_path)
 
 
 class FileMonitor:
     """Monitor a directory for file-system activity."""
 
-    def __init__(self, target_directory):
+    def __init__(
+        self,
+        target_directory,
+        event_callback=None,
+        allowed_extensions=None
+    ):
         self.target_directory = target_directory
+        self.event_callback = event_callback
+        self.allowed_extensions = allowed_extensions or []
         self.observer = Observer()
 
     def start(self):
+        """Start monitoring the target directory."""
+
         if not os.path.exists(self.target_directory):
             os.makedirs(self.target_directory)
 
-        handler = FileMonitorHandler()
+        handler = FileMonitorHandler(
+            event_callback=self.event_callback,
+            allowed_extensions=self.allowed_extensions
+        )
 
         self.observer.schedule(
             handler,
@@ -45,3 +92,10 @@ class FileMonitor:
         self.observer.start()
 
         print(f"[*] Monitoring: {self.target_directory}")
+
+    def stop(self):
+        """Stop monitoring."""
+        self.observer.stop()
+        self.observer.join()
+
+        print("[*] Monitoring stopped.")
