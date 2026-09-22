@@ -10,20 +10,22 @@ class FileMonitorHandler(FileSystemEventHandler):
     def __init__(self, event_callback=None, allowed_extensions=None):
         super().__init__()
         self.event_callback = event_callback
-        self.allowed_extensions = allowed_extensions or []
+        self.allowed_extensions = [
+            ext.lower() for ext in (allowed_extensions or [])
+        ]
 
     def _is_valid_file(self, file_path):
-        """Check whether the file should be monitored."""
-        if not os.path.isfile(file_path):
-            return False
+        """Check whether the file type should be monitored."""
 
         if not self.allowed_extensions:
             return True
 
-        return os.path.splitext(file_path)[1].lower() in self.allowed_extensions
+        extension = os.path.splitext(file_path)[1].lower()
+        return extension in self.allowed_extensions
 
-    def _handle_event(self, event_type, file_path):
-        """Create a structured event."""
+    def _handle_event(self, event_type, file_path, dest_path=None):
+        """Create and process a structured file event."""
+
         if not self._is_valid_file(file_path):
             return
 
@@ -33,10 +35,15 @@ class FileMonitorHandler(FileSystemEventHandler):
             "timestamp": datetime.now().isoformat()
         }
 
-        print(
-            f"[{event_type}] {file_path} | "
-            f"{event_data['timestamp']}"
-        )
+        if dest_path:
+            event_data["dest_path"] = dest_path
+
+        print(f"[{event_type}] {file_path}")
+
+        if dest_path:
+            print(f"    -> {dest_path}")
+
+        print(f"    Time: {event_data['timestamp']}")
 
         if self.event_callback:
             self.event_callback(event_data)
@@ -55,7 +62,11 @@ class FileMonitorHandler(FileSystemEventHandler):
 
     def on_moved(self, event):
         if not event.is_directory:
-            self._handle_event("MOVED", event.dest_path)
+            self._handle_event(
+                "MOVED",
+                event.src_path,
+                event.dest_path
+            )
 
 
 class FileMonitor:
@@ -95,6 +106,7 @@ class FileMonitor:
 
     def stop(self):
         """Stop monitoring."""
+
         self.observer.stop()
         self.observer.join()
 
