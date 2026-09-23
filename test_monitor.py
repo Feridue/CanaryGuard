@@ -10,6 +10,12 @@ def load_config():
         return json.load(file)
 
 
+def handle_event(event):
+    """Receive events from the file monitor."""
+    print("[CALLBACK RECEIVED]")
+    print(event)
+
+
 def main():
     config = load_config()
 
@@ -18,6 +24,7 @@ def main():
 
     monitor = FileMonitor(
         target_directory,
+        event_callback=handle_event,
         allowed_extensions=monitored_file_types
     )
 
