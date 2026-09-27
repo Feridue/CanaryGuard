@@ -12,3 +12,7 @@ __pycache__/
 data/
 *.log
 incident_records/
+<<<<<<< HEAD
+=======
+evidence_logs/
+>>>>>>> 99b22ac (feat: complete Phases 0-7 - monitoring, correlation, confidence engine, response & containment with desktop notifications)

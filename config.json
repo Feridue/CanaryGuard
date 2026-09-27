@@ -1,12 +1,43 @@
 {
   "target_directory": "./data/test_sandbox",
+  "protected_dir": "./data/test_sandbox",
   "mode": "Observe",
   "monitored_file_types": [".docx", ".xlsx", ".pdf", ".txt"],
   "canary_file_types": [".docx", ".xlsx", ".pdf", ".txt"],
+  "canary_files": [
+    "Q3_Financial_Report.docx",
+    "employee_records.xlsx",
+    "tax_return_2025.pdf",
+    "passwords_backup.txt",
+    "project_roadmap.docx",
+    "budget_2026.xlsx",
+    "insurance_policy.pdf",
+    "personal_notes.txt"
+  ],
   "incident_window_seconds": 3,
+  "event_grouping_window": 3,
   "confidence_thresholds": {
     "low": 20,
     "medium": 50,
     "high": 80
-  }
+  },
+  "allowlist": [
+    "svchost.exe",
+    "csrss.exe",
+    "lsass.exe",
+    "wininit.exe",
+    "services.exe",
+    "smss.exe",
+    "explorer.exe",
+    "python.exe",
+    "pythonw.exe",
+    "code.exe",
+    "WindowsTerminal.exe",
+    "cmd.exe",
+    "powershell.exe",
+    "OneDrive.exe",
+    "MsMpEng.exe"
+  ],
+  "log_dir": "./evidence_logs",
+  "log_file": "canaryguard.log"
 }
