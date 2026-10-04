@@ -285,27 +285,22 @@ class CanaryGuardEngine:
             json.dump(self.logger.config, f, indent=2)
 
 
-# ── Entry point (terminal mode, before GUI is added in Phase 9) ────────────
+# ── Entry point ───────────────────────────────────────────────────────────
 
-def main():
-    """
-    Run CanaryGuard in terminal mode.
-    Starts the engine and blocks until Ctrl+C.
-    """
+def run_cli(engine: CanaryGuardEngine):
+    """Run CanaryGuard in headless terminal mode until Ctrl+C."""
     import signal
 
-    engine = CanaryGuardEngine()
     engine.start()
 
     print("\n" + "=" * 60)
-    print("  CanaryGuard is running.")
+    print("  CanaryGuard Protection Active (CLI Mode)")
     print(f"  Mode       : {engine.mode}")
     print(f"  Watching   : {engine.manager.protected_dir}")
     print(f"  Canaries   : {len(engine.canary_files)} files")
     print("  Press Ctrl+C to stop.")
     print("=" * 60 + "\n")
 
-    # Block until Ctrl+C
     stop_event = threading.Event()
 
     def _handle_signal(sig, frame):
@@ -313,11 +308,60 @@ def main():
         stop_event.set()
 
     signal.signal(signal.SIGINT, _handle_signal)
-
     stop_event.wait()
     engine.stop()
     print("CanaryGuard stopped. Goodbye.")
 
 
+def run_gui(engine: CanaryGuardEngine, start_minimized: bool = False):
+    """Run CanaryGuard as a desktop application with System Tray and Dashboard GUI."""
+    from ui.dashboard import CanaryGuardDashboard
+    from ui.tray import CanaryGuardTray
+
+    engine.start()
+
+    tray = None
+    dashboard = None
+
+    def _quit_all():
+        if tray:
+            tray.stop()
+        engine.stop()
+        if dashboard and dashboard.root:
+            try:
+                dashboard.root.destroy()
+            except Exception:
+                pass
+        sys.exit(0)
+
+    dashboard = CanaryGuardDashboard(engine, on_quit_callback=_quit_all)
+    tray = CanaryGuardTray(engine, dashboard, on_quit_callback=_quit_all)
+    tray.start()
+
+    if start_minimized:
+        dashboard.hide()
+    else:
+        dashboard.show()
+
+    try:
+        dashboard.root.mainloop()
+    except (KeyboardInterrupt, SystemExit):
+        _quit_all()
+
+
+def main():
+    import sys
+
+    engine = CanaryGuardEngine()
+
+    # CLI flag check
+    if "--cli" in sys.argv or "--terminal" in sys.argv:
+        run_cli(engine)
+    else:
+        start_minimized = "--minimized" in sys.argv or "--tray" in sys.argv
+        run_gui(engine, start_minimized=start_minimized)
+
+
 if __name__ == "__main__":
     main()
+

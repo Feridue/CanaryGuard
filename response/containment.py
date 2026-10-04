@@ -5,6 +5,7 @@ Uses PowerShell WinRT toasts for desktop notifications (reliable on Windows 10/1
 """
 
 import subprocess
+import sys
 import psutil
 from typing import Dict, List, Any
 from evidence.logger import EvidenceLogger
@@ -154,10 +155,39 @@ class Responder:
             print(f"  Evidence  : {expl}")
             print("="*60)
             
+            choice = "n"
             try:
-                choice = input(f"\nSuspend process {name} (PID {pid})? (y/n): ").strip().lower()
-            except EOFError:
-                choice = "n"
+                if sys.stdin is not None:
+                    choice = input(f"\nSuspend process {name} (PID {pid})? (y/n): ").strip().lower()
+                else:
+                    raise EOFError("No stdin")
+            except (EOFError, OSError):
+                # Running as a background or GUI app without terminal stdin
+                try:
+                    import tkinter as tk
+                    from tkinter import messagebox
+                    root = tk.Tk()
+                    root.withdraw()
+                    root.attributes("-topmost", True)
+                    dialog_msg = (
+                        f"🚨 CanaryGuard Ransomware Alert!\n\n"
+                        f"Incident: {incident.get('files_affected_count', 0)} canary file(s) tampered.\n"
+                        f"Suspect: {name} (PID {pid})\n"
+                        f"Confidence: {conf}\n\n"
+                        f"Evidence:\n{expl}\n\n"
+                        f"Do you want to suspend this process immediately?"
+                    )
+                    approved = messagebox.askyesno(
+                        "CanaryGuard — Approval Required",
+                        dialog_msg,
+                        icon="warning"
+                    )
+                    root.destroy()
+                    choice = "y" if approved else "n"
+                except Exception as exc:
+                    self.logger._console.warning(f"[APPROVAL MODE] GUI prompt failed: {exc}, defaulting to deny.")
+                    choice = "n"
+
                 
             if choice == 'y':
                 success = self.suspend_process(pid)
