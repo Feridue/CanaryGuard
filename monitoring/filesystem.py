@@ -6,7 +6,7 @@ Uses watchdog to detect tampering with canary files and groups rapid events.
 import threading
 import time
 from pathlib import Path
-from typing import Callable, List, Set, Dict
+from typing import Callable, Dict, Optional
 
 from watchdog.events import FileSystemEventHandler, FileSystemEvent
 from watchdog.observers import Observer
@@ -30,59 +30,51 @@ class CanaryEventHandler(FileSystemEventHandler):
         self.window_seconds = self.logger.event_grouping_window
         
         self._lock = threading.Lock()
-        self._affected_canaries: Set[str] = set()
+        self._current_paths = {
+            name: self.manager.protected_dir / name
+            for name in self.manager.canary_filenames
+        }
+        self._affected_canaries: Dict[str, Path] = {}
         self._timer: threading.Timer = None
 
-    def _is_relevant_path(self, path_str: str) -> bool:
-        """Check if the event path involves a registered canary."""
+    def _canary_for_path(self, path_str: str) -> Optional[str]:
+        """Return the canary name associated with a path in the protected folder."""
         if not path_str:
-            return False
+            return None
             
         path = Path(path_str)
-        # Check if the filename exactly matches a canary, or if the original canary was renamed to .locked
-        # We also want to catch if they rename a canary to something else entirely.
-        # But watchdog gives us the src_path (old name) and dest_path (new name).
-        
-        # Is it in the protected dir?
         if path.parent.resolve() != self.manager.protected_dir.resolve():
-            return False
-            
-        # If it's an exact canary name
+            return None
+
         if path.name in self.manager.canary_filenames:
-            return True
-            
-        # If the original name was a canary (e.g., watchdog tells us a canary was renamed to something else)
-        # We handle this by passing both src and dest to this function below.
-        
-        return False
+            return path.name
+
+        resolved_path = path.resolve()
+        for name, current_path in self._current_paths.items():
+            if resolved_path == current_path.resolve():
+                return name
+        return None
 
     def _handle_event(self, event: FileSystemEvent):
         """Process an incoming filesystem event."""
-        # Check if the event touches a canary
-        relevant = False
-        affected_name = None
-        
         src_path = getattr(event, 'src_path', None)
         dest_path = getattr(event, 'dest_path', None)
-        
-        # Fast path check
-        if src_path:
-            src_name = Path(src_path).name
-            if src_name in self.manager.canary_filenames:
-                relevant = True
-                affected_name = src_name
-                
-        if not relevant and dest_path:
-            dest_name = Path(dest_path).name
-            if dest_name in self.manager.canary_filenames:
-                relevant = True
-                affected_name = dest_name
-                
-        if not relevant:
-            return
 
         with self._lock:
-            self._affected_canaries.add(affected_name)
+            affected_name = self._canary_for_path(src_path)
+            matched_path = src_path
+            if affected_name is None:
+                affected_name = self._canary_for_path(dest_path)
+                matched_path = dest_path
+
+            if affected_name is None:
+                return
+
+            current_path = Path(matched_path)
+            if event.event_type == "moved" and dest_path:
+                current_path = Path(dest_path)
+            self._current_paths[affected_name] = current_path
+            self._affected_canaries[affected_name] = current_path
             
             # Reset or start the timer
             if self._timer is not None:
@@ -99,14 +91,14 @@ class CanaryEventHandler(FileSystemEventHandler):
                 return
             
             # Take a snapshot and clear for the next potential incident
-            canaries_to_check = list(self._affected_canaries)
+            canaries_to_check = dict(self._affected_canaries)
             self._affected_canaries.clear()
             self._timer = None
 
         # Verify exact states now that the dust has settled
         details = []
-        for name in canaries_to_check:
-            status = self.manager.verify_canary(name)
+        for name, current_path in canaries_to_check.items():
+            status = self.manager.verify_canary(name, current_path=current_path)
             # It's possible the event was harmless noise and the file is actually unchanged
             if status != "unchanged":
                 details.append({
