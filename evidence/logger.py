@@ -7,10 +7,26 @@ All other modules use this logger as their output sink.
 import json
 import logging
 import os
+import sys
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+from logging.handlers import RotatingFileHandler
+
+
+_LOG_MAX_BYTES = 10 * 1024 * 1024
+_LOG_BACKUP_COUNT = 5
+
+
+class _RaisingRotatingFileHandler(RotatingFileHandler):
+    """Rotating handler that keeps file-write failures visible to callers."""
+
+    def handleError(self, record: logging.LogRecord) -> None:
+        error = sys.exc_info()[1]
+        if error is not None:
+            raise error
+        super().handleError(record)
 
 
 # ---------------------------------------------------------------------------
@@ -115,6 +131,14 @@ class EvidenceLogger:
         # Ensure the log directory exists
         self._log_dir.mkdir(parents=True, exist_ok=True)
 
+        self._file_handler = _RaisingRotatingFileHandler(
+            self._log_file,
+            maxBytes=_LOG_MAX_BYTES,
+            backupCount=_LOG_BACKUP_COUNT,
+            encoding="utf-8",
+        )
+        self._file_handler.setFormatter(logging.Formatter("%(message)s"))
+
         # Set up Python's stdlib logger for human-readable console output
         self._console = logging.getLogger("canaryguard")
         if not self._console.handlers:
@@ -198,8 +222,16 @@ class EvidenceLogger:
     def _write(self, record: dict) -> None:
         """Append *record* as a single JSON line to the log file."""
         line = json.dumps(record, ensure_ascii=False, default=str)
-        with open(self._log_file, "a", encoding="utf-8") as f:
-            f.write(line + "\n")
+        log_record = logging.LogRecord(
+            name="canaryguard.evidence",
+            level=logging.INFO,
+            pathname=str(self._log_file),
+            lineno=0,
+            msg=line,
+            args=(),
+            exc_info=None,
+        )
+        self._file_handler.handle(log_record)
 
     # ------------------------------------------------------------------
     # Properties exposing config fields to other modules
