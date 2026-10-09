@@ -4,12 +4,21 @@ Wires together all modules into a single background-thread engine.
 The GUI (Phase 9) will call into this engine's public API.
 """
 
+import os
+import sys
+from pathlib import Path
+
+# Force current working directory to project root so all relative paths resolve reliably
+PROJECT_ROOT = Path(__file__).resolve().parent
+os.chdir(PROJECT_ROOT)
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
 import json
 import threading
 import time
 from collections import deque
 from datetime import datetime, timezone
-from pathlib import Path
 from typing import Callable, Optional
 
 from canary.manager import CanaryManager
@@ -24,25 +33,6 @@ from evidence.logger import EvidenceLogger
 class CanaryGuardEngine:
     """
     The central engine that runs CanaryGuard as a background thread.
-
-    Lifecycle
-    ---------
-    engine = CanaryGuardEngine()
-    engine.start()          # starts monitoring
-    engine.pause()          # pauses (monitor keeps running, no responses)
-    engine.resume()         # resumes
-    engine.stop()           # shuts everything down cleanly
-
-    Runtime canary management
-    -------------------------
-    engine.add_canary(path)     # add a file to monitoring at runtime
-    engine.remove_canary(path)  # remove a file from monitoring at runtime
-
-    GUI integration
-    ---------------
-    engine.on_incident_callback = my_gui_function
-    # my_gui_function(incident_dict) will be called on every incident
-    engine.recent_incidents   # deque of last 50 incidents
     """
 
     def __init__(self, config_path: str = None):
@@ -60,14 +50,42 @@ class CanaryGuardEngine:
         # Rolling snapshot taken just before each incident window closes
         self._snapshot_before: dict = {}
 
-        # Last 50 incidents for the dashboard
+        # Last 50 incidents for the dashboard (loaded from disk on startup)
         self.recent_incidents: deque = deque(maxlen=50)
+        self._load_persisted_incidents()
 
         # Optional GUI callback — set this before calling start()
         self.on_incident_callback: Optional[Callable[[dict], None]] = None
 
         # Background thread for the pre-incident process snapshot loop
         self._sampler_thread: Optional[threading.Thread] = None
+
+    def _load_persisted_incidents(self) -> None:
+        """Load recent historical incidents from canaryguard.log into memory."""
+        log_file = getattr(self.logger, "_log_file", None)
+        if not log_file or not Path(log_file).exists():
+            return
+
+        try:
+            incidents = []
+            with open(log_file, "r", encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        record = json.loads(line)
+                        if record.get("record_type") == "incident":
+                            incidents.append(record)
+                    except json.JSONDecodeError:
+                        continue
+
+            for inc in incidents[-50:]:
+                self.recent_incidents.appendleft(inc)
+        except Exception as e:
+            if hasattr(self.logger, "_console"):
+                self.logger._console.warning(f"[ENGINE] Could not load past incidents: {e}")
+
 
     # ── Lifecycle ──────────────────────────────────────────────────────────
 
@@ -181,6 +199,24 @@ class CanaryGuardEngine:
         self._save_config()
         self.logger.log_system_event(f"Mode changed to: {mode}")
 
+    def add_folder(self, folderpath: str) -> bool:
+        """Add a directory to monitor recursively at runtime."""
+        success = self.manager.add_folder(folderpath)
+        if success:
+            self._save_config()
+            if self._monitor:
+                self._monitor.refresh_watches()
+        return success
+
+    def remove_folder(self, folderpath: str) -> bool:
+        """Remove a directory from monitoring at runtime."""
+        success = self.manager.remove_folder(folderpath)
+        if success:
+            self._save_config()
+            if self._monitor:
+                self._monitor.refresh_watches()
+        return success
+
     # ── Properties for GUI ─────────────────────────────────────────────────
 
     @property
@@ -198,6 +234,11 @@ class CanaryGuardEngine:
     @property
     def canary_files(self) -> list:
         return list(self.manager.canary_filenames)
+
+    @property
+    def monitored_folders(self) -> list:
+        return list(getattr(self.manager, "monitored_folders", []))
+
 
     # ── Internal ───────────────────────────────────────────────────────────
 

@@ -27,13 +27,14 @@ def _send_desktop_notification(title: str, message: str) -> None:
 $AppID = '{{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}}\\WindowsPowerShell\\v1.0\\powershell.exe'
 
 $template = @'
-<toast duration="long">
+<toast duration="long" scenario="reminder">
     <visual>
         <binding template="ToastGeneric">
             <text>{title_safe}</text>
             <text>{message_safe}</text>
         </binding>
     </visual>
+    <audio src="ms-winsoundevent:Notification.Default" loop="false"/>
 </toast>
 '@
 
@@ -44,10 +45,11 @@ $toast = [Windows.UI.Notifications.ToastNotification]::new($xml)
 """
     result = subprocess.run(
         ["powershell", "-NoProfile", "-NonInteractive", "-Command", ps_script],
-        capture_output=True, text=True
+        capture_output=True, text=True, timeout=10
     )
     if result.returncode != 0:
         raise RuntimeError(result.stderr.strip())
+
 
 class Responder:
     def __init__(self, logger: EvidenceLogger):

@@ -108,9 +108,16 @@ class EvidenceLogger:
         if config is None:
             config = load_config(config_path)
 
+        project_root = Path(__file__).resolve().parent.parent
+        self.project_root = project_root
+
         self.config = config
-        self._log_dir = Path(config["log_dir"])
+        log_dir_path = Path(config["log_dir"])
+        if not log_dir_path.is_absolute():
+            log_dir_path = project_root / log_dir_path
+        self._log_dir = log_dir_path
         self._log_file = self._log_dir / config["log_file"]
+        self._formatted_log_file = self._log_dir / "canaryguard_formatted.log"
 
         # Ensure the log directory exists
         self._log_dir.mkdir(parents=True, exist_ok=True)
@@ -129,6 +136,7 @@ class EvidenceLogger:
             self._console.setLevel(logging.INFO)
 
         self.log_system_event("EvidenceLogger initialised", extra={"log_file": str(self._log_file)})
+
 
     # ------------------------------------------------------------------
     # Public API
@@ -195,11 +203,91 @@ class EvidenceLogger:
         # data fields can override base fields if they supply incident_id
         return {**base, **data}
 
+    def format_record(self, record: dict) -> str:
+        """Produce a clean, human-readable representation of a log record."""
+        rec_type = record.get("record_type", "unknown")
+        ts = record.get("timestamp", "")
+        try:
+            dt = datetime.fromisoformat(ts)
+            ts_str = dt.strftime("%Y-%m-%d %H:%M:%S UTC")
+        except Exception:
+            ts_str = str(ts)
+
+        if rec_type == "incident":
+            inc_id = record.get("incident_id", "N/A")
+            affected = record.get("affected_canaries", [])
+            affected_str = ", ".join([f"{c.get('canary_name', '')} ({c.get('state', '')})" for c in affected]) if affected else record.get("canary_affected", "None")
+            count = record.get("files_affected_count", len(affected))
+            
+            candidates = record.get("candidates", [])
+            top = candidates[0] if candidates else {}
+            suspect_name = top.get("name", "Unknown")
+            suspect_pid = top.get("pid", "N/A")
+            confidence = top.get("confidence", "None")
+            score = top.get("score", 0.0)
+            evidence = top.get("explanation") or ", ".join(top.get("evidence", [])) or "None"
+            decision = record.get("decision", "observe")
+            action = record.get("action_taken", "none")
+
+            lines = [
+                "=" * 80,
+                f"[{ts_str}] 🚨 INCIDENT DETECTED (ID: {inc_id})",
+                f"  Files Affected : {affected_str} (Total: {count})",
+                f"  Suspect Process: {suspect_name} (PID: {suspect_pid})",
+                f"  Threat Level   : {confidence.upper()} confidence (Score: {score})",
+                f"  Forensic Signal: {evidence}",
+                f"  Response Action: Mode '{decision.upper()}' -> Action '{action.upper()}'",
+                "=" * 80,
+            ]
+            return "\n".join(lines)
+
+        elif rec_type == "system_event":
+            msg = record.get("message", "")
+            extra_keys = {k: v for k, v in record.items() if k not in ("record_type", "incident_id", "timestamp", "message")}
+            extra_str = f" ({extra_keys})" if extra_keys else ""
+            return f"[{ts_str}] ℹ️ SYSTEM: {msg}{extra_str}"
+        
+        return f"[{ts_str}] [{rec_type.upper()}]: {record}"
+
+    def read_formatted_logs(self, max_entries: int = 100, filter_type: str = "all") -> str:
+        """Read and filter recent human-readable log records for the dashboard."""
+        if not self._log_file.exists():
+            return "No activity logs recorded yet."
+
+        entries = []
+        try:
+            with open(self._log_file, "r", encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        record = json.loads(line)
+                        rtype = record.get("record_type")
+                        if filter_type == "incidents" and rtype != "incident":
+                            continue
+                        elif filter_type == "system" and rtype != "system_event":
+                            continue
+                        entries.append(self.format_record(record))
+                    except json.JSONDecodeError:
+                        continue
+            
+            if not entries:
+                return f"No logs matching filter '{filter_type}'."
+            return "\n".join(entries[-max_entries:])
+        except Exception as e:
+            return f"Error reading logs: {e}"
+
     def _write(self, record: dict) -> None:
-        """Append *record* as a single JSON line to the log file."""
+        """Append record to both structured JSONL log and human-readable formatted log."""
         line = json.dumps(record, ensure_ascii=False, default=str)
         with open(self._log_file, "a", encoding="utf-8") as f:
             f.write(line + "\n")
+
+        formatted = self.format_record(record)
+        if formatted:
+            with open(self._formatted_log_file, "a", encoding="utf-8") as f:
+                f.write(formatted + "\n\n")
 
     # ------------------------------------------------------------------
     # Properties exposing config fields to other modules
@@ -213,7 +301,11 @@ class EvidenceLogger:
     @property
     def protected_dir(self) -> str:
         """Path to the directory being guarded."""
-        return self.config["protected_dir"]
+        p = Path(self.config["protected_dir"])
+        if not p.is_absolute():
+            p = self.project_root / p
+        return str(p)
+
 
     @property
     def canary_files(self) -> list[str]:

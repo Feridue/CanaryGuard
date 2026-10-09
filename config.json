@@ -9,7 +9,9 @@
     "project_roadmap.docx",
     "budget_2026.xlsx",
     "insurance_policy.pdf",
-    "personal_notes.txt"
+    "personal_notes.txt",
+    "test1.txt",
+    "hermes_test.txt"
   ],
   "canary_file_types": [
     ".docx",
@@ -17,6 +19,7 @@
     ".pdf",
     ".txt"
   ],
+  "monitored_folders": [],
   "event_grouping_window": 1,
   "confidence_thresholds": {
     "low": 20,

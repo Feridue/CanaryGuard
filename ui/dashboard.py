@@ -57,7 +57,7 @@ class CanaryGuardDashboard:
         ctrl_frame = ttk.Frame(header_frame)
         ctrl_frame.pack(side=tk.RIGHT)
 
-        self.status_var = tk.StringVar(value="🟢 MONITORING")
+        self.status_var = tk.StringVar()
         self.status_label = ttk.Label(
             ctrl_frame,
             textvariable=self.status_var,
@@ -86,6 +86,19 @@ class CanaryGuardDashboard:
         self.mode_combo.pack(side=tk.LEFT, padx=4)
         self.mode_combo.bind("<<ComboboxSelected>>", self._on_mode_changed)
 
+        # Mode explanation banner
+        self.banner_var = tk.StringVar()
+        self.banner_frame = ttk.Frame(self.root, padding=(12, 0, 12, 6))
+        self.banner_frame.pack(fill=tk.X)
+        self.banner_label = ttk.Label(
+            self.banner_frame,
+            textvariable=self.banner_var,
+            font=("Segoe UI", 9, "italic")
+        )
+        self.banner_label.pack(anchor=tk.W)
+
+        self._update_status_display()
+
         # Separator
         ttk.Separator(self.root, orient=tk.HORIZONTAL).pack(fill=tk.X, padx=10)
 
@@ -98,15 +111,21 @@ class CanaryGuardDashboard:
         self.notebook.add(self.incident_tab, text="🚨 Incident Feed")
         self._build_incident_tab()
 
-        # Tab 2: Canary Decoy Files
+        # Tab 2: Canary Decoy Files & Folders
         self.canary_tab = ttk.Frame(self.notebook, padding=8)
-        self.notebook.add(self.canary_tab, text="📁 Canary Files")
+        self.notebook.add(self.canary_tab, text="📁 Canary Files & Folders")
         self._build_canary_tab()
 
-        # Tab 3: Settings & Logs
+        # Tab 3: System & Activity Logs
+        self.logs_tab = ttk.Frame(self.notebook, padding=8)
+        self.notebook.add(self.logs_tab, text="📋 Activity Logs")
+        self._build_logs_tab()
+
+        # Tab 4: Settings
         self.settings_tab = ttk.Frame(self.notebook, padding=8)
         self.notebook.add(self.settings_tab, text="⚙️ Settings")
         self._build_settings_tab()
+
 
     # ── Tab 1: Incident Feed ────────────────────────────────────────────────
     def _build_incident_tab(self):
@@ -179,8 +198,50 @@ class CanaryGuardDashboard:
         btn_row.pack(fill=tk.X)
 
         ttk.Button(btn_row, text="➕ Add Canary File...", command=self._add_canary_dialog).pack(side=tk.LEFT, padx=4)
+        ttk.Button(btn_row, text="📁 Add Folder...", command=self._add_folder_dialog).pack(side=tk.LEFT, padx=4)
         ttk.Button(btn_row, text="🗑️ Remove Selected", command=self._remove_selected_canary).pack(side=tk.LEFT, padx=4)
         ttk.Button(btn_row, text="🔄 Reset & Replant Baseline", command=self._replant_canaries).pack(side=tk.RIGHT, padx=4)
+
+    # ── Tab 3: System Logs ──────────────────────────────────────────────────
+    def _build_logs_tab(self):
+        ctrl_bar = ttk.Frame(self.logs_tab, padding=(0, 0, 0, 8))
+        ctrl_bar.pack(fill=tk.X)
+
+        ttk.Label(ctrl_bar, text="Filter:").pack(side=tk.LEFT, padx=(0, 4))
+        self.log_filter_var = tk.StringVar(value="all")
+        filter_combo = ttk.Combobox(
+            ctrl_bar,
+            textvariable=self.log_filter_var,
+            values=["all", "incidents", "system"],
+            state="readonly",
+            width=12
+        )
+        filter_combo.pack(side=tk.LEFT, padx=4)
+        filter_combo.bind("<<ComboboxSelected>>", lambda e: self._refresh_logs_display())
+
+        ttk.Button(ctrl_bar, text="🔄 Refresh Logs", command=self._refresh_logs_display).pack(side=tk.LEFT, padx=8)
+        ttk.Button(ctrl_bar, text="📂 Open Log Folder", command=self._open_log_dir).pack(side=tk.RIGHT)
+
+        # Scrolled text area for formatted logs
+        text_frame = ttk.Frame(self.logs_tab)
+        text_frame.pack(fill=tk.BOTH, expand=True)
+
+        self.log_text = tk.Text(
+            text_frame,
+            wrap=tk.NONE,
+            font=("Consolas", 9),
+            background="#1e1e1e",
+            foreground="#d4d4d4",
+            insertbackground="#ffffff"
+        )
+        v_scroll = ttk.Scrollbar(text_frame, orient=tk.VERTICAL, command=self.log_text.yview)
+        h_scroll = ttk.Scrollbar(text_frame, orient=tk.HORIZONTAL, command=self.log_text.xview)
+        self.log_text.configure(xscrollcommand=h_scroll.set, yscrollcommand=v_scroll.set)
+
+        self.log_text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        v_scroll.pack(side=tk.RIGHT, fill=tk.Y)
+        h_scroll.pack(side=tk.BOTTOM, fill=tk.X)
+
 
     # ── Tab 3: Settings ─────────────────────────────────────────────────────
     def _build_settings_tab(self):
@@ -215,20 +276,40 @@ class CanaryGuardDashboard:
 
     # ── Event handlers & UI Logic ───────────────────────────────────────────
 
+    def _update_status_display(self):
+        mode = self.engine.mode
+        if self.engine.is_paused:
+            self.status_var.set(f"⏸️ PAUSED ({mode})")
+            self.status_label.configure(foreground="#d97706")
+            self.pause_btn.configure(text="Resume")
+            self.banner_var.set("⏸️ Monitoring is currently paused. File changes will not trigger containment responses.")
+        else:
+            self.pause_btn.configure(text="Pause")
+            if mode == "Automatic":
+                self.status_var.set("🟢 MONITORING — Automatic")
+                self.status_label.configure(foreground="#16a34a")
+                self.banner_var.set("🛡️ Automatic Mode: High-confidence threats are isolated and suspended automatically.")
+            elif mode == "Approval":
+                self.status_var.set("🟡 MONITORING — Approval")
+                self.status_label.configure(foreground="#ca8a04")
+                self.banner_var.set("⚠️ Approval Mode: On-screen confirmation popup will prompt you before suspending any process.")
+            else:
+                self.status_var.set("🔵 MONITORING — Observe")
+                self.status_label.configure(foreground="#2563eb")
+                self.banner_var.set("👁️ Observe Mode: All incidents are logged and alerted; no processes will ever be suspended.")
+
     def _toggle_pause(self):
         if self.engine.is_paused:
             self.engine.resume()
-            self.status_var.set("🟢 MONITORING")
-            self.pause_btn.configure(text="Pause")
         else:
             self.engine.pause()
-            self.status_var.set("🟡 PAUSED")
-            self.pause_btn.configure(text="Resume")
+        self._update_status_display()
 
     def _on_mode_changed(self, event=None):
         new_mode = self.mode_var.get()
         try:
             self.engine.set_mode(new_mode)
+            self._update_status_display()
         except Exception as e:
             messagebox.showerror("Error", f"Failed to switch mode: {e}")
 
@@ -238,6 +319,9 @@ class CanaryGuardDashboard:
         if not success:
             messagebox.showwarning("Registry Notice", "Could not update Windows startup registry.")
             self.autostart_var.set(is_autostart_enabled())
+        else:
+            state_str = "enabled" if enable else "disabled"
+            messagebox.showinfo("Autostart", f"CanaryGuard autostart on Windows boot is now {state_str}.")
 
     def _add_canary_dialog(self):
         chosen_file = filedialog.askopenfilename(
@@ -253,17 +337,38 @@ class CanaryGuardDashboard:
             else:
                 messagebox.showwarning("Notice", "This file is already monitored as a canary.")
 
+    def _add_folder_dialog(self):
+        chosen_folder = filedialog.askdirectory(
+            title="Select Folder to Monitor Recursively",
+            initialdir=str(Path.home())
+        )
+        if chosen_folder:
+            success = self.engine.add_folder(chosen_folder)
+            if success:
+                self._refresh_canary_list()
+                messagebox.showinfo("Folder Monitored", f"Folder '{chosen_folder}' and all files inside it are now being monitored.")
+            else:
+                messagebox.showwarning("Notice", "This folder is already monitored or does not exist.")
+
     def _remove_selected_canary(self):
         selected_idx = self.canary_listbox.curselection()
         if not selected_idx:
-            messagebox.showinfo("Select File", "Please select a canary file to remove.")
+            messagebox.showinfo("Select Item", "Please select a canary file or folder to remove.")
             return
 
-        filename = self.canary_listbox.get(selected_idx[0])
-        confirm = messagebox.askyesno("Confirm Removal", f"Stop monitoring '{filename}'?\n(The file itself will not be deleted)")
-        if confirm:
-            self.engine.remove_canary(filename)
-            self._refresh_canary_list()
+        item_text = self.canary_listbox.get(selected_idx[0])
+        if item_text.startswith("📁 [Folder] "):
+            folder_path = item_text.replace("📁 [Folder] ", "").strip()
+            confirm = messagebox.askyesno("Confirm Removal", f"Stop monitoring folder '{folder_path}' and all files inside?\n(Existing files will NOT be deleted)")
+            if confirm:
+                self.engine.remove_folder(folder_path)
+                self._refresh_canary_list()
+        else:
+            filename = item_text.replace("📄 ", "").strip()
+            confirm = messagebox.askyesno("Confirm Removal", f"Stop monitoring '{filename}'?\n(The file itself will not be deleted)")
+            if confirm:
+                self.engine.remove_canary(filename)
+                self._refresh_canary_list()
 
     def _replant_canaries(self):
         confirm = messagebox.askyesno("Replant Baselines", "Replant all original decoy canaries and reset file baselines?")
@@ -282,18 +387,40 @@ class CanaryGuardDashboard:
 
     def _refresh_canary_list(self):
         self.canary_listbox.delete(0, tk.END)
+        # Show monitored folders first
+        for folder_path in self.engine.monitored_folders:
+            self.canary_listbox.insert(tk.END, f"📁 [Folder] {folder_path}")
+        # Show canary files
         for fname in self.engine.canary_files:
-            self.canary_listbox.insert(tk.END, fname)
+            self.canary_listbox.insert(tk.END, f"📄 {fname}")
+
+    def _refresh_logs_display(self):
+        if not hasattr(self, "log_text"):
+            return
+        filter_type = getattr(self, "log_filter_var", None)
+        f_val = filter_type.get() if filter_type else "all"
+        text_content = self.engine.logger.read_formatted_logs(max_entries=150, filter_type=f_val)
+        self.log_text.delete("1.0", tk.END)
+        self.log_text.insert(tk.END, text_content)
+        self.log_text.see(tk.END)
 
     def _refresh_all(self):
+        self._update_status_display()
         self._refresh_canary_list()
-        # Load any existing incidents
+        self._refresh_logs_display()
+        # Clear and reload incident rows from engine.recent_incidents
+        for item in self.tree.get_children():
+            self.tree.delete(item)
+        if hasattr(self, "_cached_incidents"):
+            self._cached_incidents.clear()
+
         for inc in reversed(self.engine.recent_incidents):
             self._insert_incident_row(inc)
 
     def _on_incident_received(self, incident: dict):
         """Thread-safe UI update when an incident occurs."""
         self.root.after(0, self._insert_incident_row, incident)
+        self.root.after(0, self._refresh_logs_display)
 
     def _insert_incident_row(self, inc: dict):
         # Format timestamp
@@ -306,7 +433,7 @@ class CanaryGuardDashboard:
 
         # Extract primary canary
         canary_names = [c.get("canary_name", "") for c in inc.get("affected_canaries", [])]
-        canary_str = ", ".join(canary_names) if canary_names else "Unknown"
+        canary_str = ", ".join(canary_names) if canary_names else inc.get("canary_affected", "Unknown")
 
         # Suspect info
         candidates = inc.get("candidates", [])
@@ -317,7 +444,6 @@ class CanaryGuardDashboard:
 
         tag = conf.upper() if conf in ("High", "Medium", "Low") else ""
         item_id = self.tree.insert("", 0, values=(ts, canary_str, suspect, conf, action), tags=(tag,))
-        # Store full incident dict in tree item dictionary
         self.tree.set(item_id, column="time", value=ts)
         self._cached_incidents = getattr(self, "_cached_incidents", {})
         self._cached_incidents[item_id] = inc
@@ -351,7 +477,8 @@ class CanaryGuardDashboard:
         self.detail_text.configure(state="disabled")
 
     def show(self):
-        """Bring the dashboard window to front."""
+        """Bring the dashboard window to front and refresh all data."""
+        self._refresh_all()
         self.root.deiconify()
         self.root.lift()
         self.root.focus_force()
@@ -369,3 +496,4 @@ class CanaryGuardDashboard:
                 self.engine.stop()
                 self.root.destroy()
                 sys.exit(0)
+

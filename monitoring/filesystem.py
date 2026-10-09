@@ -58,31 +58,21 @@ class CanaryEventHandler(FileSystemEventHandler):
 
     def _handle_event(self, event: FileSystemEvent):
         """Process an incoming filesystem event."""
-        # Check if the event touches a canary
-        relevant = False
-        affected_name = None
-        
         src_path = getattr(event, 'src_path', None)
         dest_path = getattr(event, 'dest_path', None)
         
-        # Fast path check
+        affected_name = None
         if src_path:
-            src_name = Path(src_path).name
-            if src_name in self.manager.canary_filenames:
-                relevant = True
-                affected_name = src_name
-                
-        if not relevant and dest_path:
-            dest_name = Path(dest_path).name
-            if dest_name in self.manager.canary_filenames:
-                relevant = True
-                affected_name = dest_name
-                
-        if not relevant:
+            affected_name = self.manager.is_path_monitored(Path(src_path))
+        if not affected_name and dest_path:
+            affected_name = self.manager.is_path_monitored(Path(dest_path))
+            
+        if not affected_name:
             return
 
         with self._lock:
             self._affected_canaries.add(affected_name)
+
             
             # Reset or start the timer
             if self._timer is not None:
@@ -147,22 +137,50 @@ class FilesystemMonitor:
         self.logger = logger
         self.callback = on_incident_callback
         self.observer = None
+        self._event_handler = None
+        self._watch_handles = []
 
     def start(self):
         """Start the watchdog observer loop in a background thread."""
         if self.observer is not None:
             return
             
-        event_handler = CanaryEventHandler(self.manager, self.logger, self.callback)
+        self._event_handler = CanaryEventHandler(self.manager, self.logger, self.callback)
         self.observer = Observer()
-        self.observer.schedule(
-            event_handler, 
-            str(self.manager.protected_dir), 
-            recursive=False
-        )
         self.observer.daemon = True
+        self.refresh_watches()
         self.observer.start()
         self.logger.log_system_event("Filesystem monitor started")
+
+    def refresh_watches(self):
+        """Schedule or re-schedule watches for protected_dir and all monitored folders."""
+        if self.observer is None or self._event_handler is None:
+            return
+
+        try:
+            self.observer.unschedule_all()
+        except Exception:
+            pass
+        self._watch_handles.clear()
+
+        # 1. Schedule protected_dir recursively
+        p_dir = Path(self.manager.protected_dir)
+        p_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            w = self.observer.schedule(self._event_handler, str(p_dir), recursive=True)
+            self._watch_handles.append(w)
+        except Exception as e:
+            self.logger._console.warning(f"[MONITOR] Failed to watch protected directory: {e}")
+
+        # 2. Schedule each monitored folder recursively
+        for folder_str in getattr(self.manager, "monitored_folders", []):
+            f_path = Path(folder_str)
+            if f_path.exists() and f_path.is_dir():
+                try:
+                    w = self.observer.schedule(self._event_handler, str(f_path), recursive=True)
+                    self._watch_handles.append(w)
+                except Exception as e:
+                    self.logger._console.warning(f"[MONITOR] Failed to watch folder {f_path}: {e}")
 
     def stop(self):
         """Stop the watchdog observer."""
@@ -170,4 +188,6 @@ class FilesystemMonitor:
             self.observer.stop()
             self.observer.join(timeout=5)
             self.observer = None
+            self._watch_handles.clear()
             self.logger.log_system_event("Filesystem monitor stopped")
+
