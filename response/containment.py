@@ -60,8 +60,9 @@ class Responder:
         self.allowlist = self.logger.config.get("allowlist", [
             "svchost.exe", "explorer.exe", "csrss.exe", "smss.exe", 
             "wininit.exe", "winlogon.exe", "lsass.exe", "services.exe", 
-            "taskmgr.exe", "system", "system idle process"
+            "taskmgr.exe", "system", "system idle process", "dllhost.exe", "searchindexer.exe"
         ])
+
         # Track currently suspended processes: pid -> dict(name, pid, canary, time)
         self.suspended_processes: Dict[int, Dict[str, Any]] = {}
         
@@ -194,8 +195,16 @@ class Responder:
             name = top_suspect.get("name")
             conf = top_suspect.get("confidence")
             expl = top_suspect.get("explanation")
-            
+
+            # Check if suspect is an allowlisted OS process
+            if self._is_allowed(name):
+                self.logger._console.info(f"[APPROVAL MODE] Suspect {name} is on the OS allowlist. Suppressing prompt.")
+                incident["decision"] = "allowlisted"
+                incident["action_taken"] = "none"
+                return incident
+
             print("\n" + "="*60)
+
             print("  🚨 [APPROVAL REQUIRED] 🚨")
             print("="*60)
             print(f"  Incident  : {incident.get('files_affected_count')} canary files tampered ({canary_str})")

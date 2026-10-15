@@ -10,8 +10,7 @@
     "budget_2026.xlsx",
     "insurance_policy.pdf",
     "personal_notes.txt",
-    "test1.txt",
-    "hermes_test.txt"
+    "test1.txt"
   ],
   "canary_file_types": [
     ".docx",
@@ -20,7 +19,9 @@
     ".txt"
   ],
   "monitored_folders": [],
-  "custom_canaries": [],
+  "custom_canaries": [
+    "C:\\Users\\25193\\OneDrive\\Desktop\\hermes_test.txt"
+  ],
   "event_grouping_window": 1,
   "confidence_thresholds": {
     "low": 20,
@@ -42,7 +43,9 @@
     "cmd.exe",
     "powershell.exe",
     "OneDrive.exe",
-    "MsMpEng.exe"
+    "MsMpEng.exe",
+    "dllhost.exe",
+    "SearchIndexer.exe"
   ],
   "log_dir": "./evidence_logs",
   "log_file": "canaryguard.log"
