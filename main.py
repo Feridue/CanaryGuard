@@ -148,47 +148,61 @@ class CanaryGuardEngine:
 
     def add_canary(self, filepath: str) -> bool:
         """
-        Add an existing file (or a new path) to the canary watch list at runtime.
+        Add an existing file to be monitored at runtime directly in-place.
         Saves the updated list to config.json.
-        Returns True on success, False if the path is already monitored.
+        Returns True on success, False if already monitored or invalid.
         """
-        path = Path(filepath)
-        name = path.name
-
-        if name in self.manager.canary_filenames:
+        p = Path(filepath).resolve()
+        if not p.exists() or not p.is_file():
             return False
 
-        # Copy the file into the protected directory if it lives elsewhere
-        dest = self.manager.protected_dir / name
-        if path.resolve() != dest.resolve():
-            import shutil
-            dest.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(str(path), str(dest))
+        # If inside protected sandbox directory, add to standard canary_filenames
+        try:
+            if p.is_relative_to(self.manager.protected_dir.resolve()):
+                if p.name in self.manager.canary_filenames:
+                    return False
+                self.manager.canary_filenames.append(p.name)
+                self.manager._record_baseline()
+                self._save_canary_list()
+                if self._monitor:
+                    self._monitor.refresh_watches()
+                self.logger.log_system_event(f"Canary decoy added: {p.name}")
+                return True
+        except (ValueError, AttributeError):
+            pass
 
-        # Register the new canary
-        self.manager.canary_filenames.append(name)
-        self.manager._record_baseline()
+        # Otherwise, monitor the file in-place where it actually lives
+        success = self.manager.add_custom_canary(str(p))
+        if success:
+            self._save_canary_list()
+            if self._monitor:
+                self._monitor.refresh_watches()
+        return success
 
-        # Persist to config.json
-        self._save_canary_list()
-        self.logger.log_system_event(f"Canary added at runtime: {name}")
-        return True
-
-    def remove_canary(self, filename: str) -> bool:
+    def remove_canary(self, filename_or_path: str) -> bool:
         """
-        Remove a canary file from the watch list at runtime.
+        Remove a canary file from monitoring at runtime.
         Does not delete the actual file. Saves the updated list to config.json.
-        Returns True on success, False if the name wasn't in the list.
         """
-        if filename not in self.manager.canary_filenames:
-            return False
+        # 1. Try removing from custom_canaries
+        if self.manager.remove_custom_canary(filename_or_path):
+            self._save_canary_list()
+            if self._monitor:
+                self._monitor.refresh_watches()
+            return True
 
-        self.manager.canary_filenames.remove(filename)
-        self.manager.baselines.pop(filename, None)
+        # 2. Try removing from standard canary_filenames
+        target_name = Path(filename_or_path).name
+        if target_name in self.manager.canary_filenames:
+            self.manager.canary_filenames.remove(target_name)
+            self.manager.baselines.pop(target_name, None)
+            self._save_canary_list()
+            if self._monitor:
+                self._monitor.refresh_watches()
+            self.logger.log_system_event(f"Canary removed: {target_name}")
+            return True
 
-        self._save_canary_list()
-        self.logger.log_system_event(f"Canary removed at runtime: {filename}")
-        return True
+        return False
 
     def set_mode(self, mode: str) -> None:
         """Switch operating mode at runtime and persist to config.json."""
@@ -217,6 +231,21 @@ class CanaryGuardEngine:
                 self._monitor.refresh_watches()
         return success
 
+    # ── Process Containment Management ─────────────────────────────────────
+
+    @property
+    def suspended_processes(self) -> dict:
+        """Return dict of currently suspended processes {pid: info}."""
+        return dict(getattr(self.responder, "suspended_processes", {}))
+
+    def resume_process(self, pid: int) -> bool:
+        """Resume a suspended process."""
+        return self.responder.resume_process(pid)
+
+    def kill_process(self, pid: int) -> bool:
+        """Permanently terminate a suspended or hostile process."""
+        return self.responder.kill_process(pid)
+
     # ── Properties for GUI ─────────────────────────────────────────────────
 
     @property
@@ -236,8 +265,13 @@ class CanaryGuardEngine:
         return list(self.manager.canary_filenames)
 
     @property
+    def custom_canaries(self) -> list:
+        return list(getattr(self.manager, "custom_canaries", []))
+
+    @property
     def monitored_folders(self) -> list:
         return list(getattr(self.manager, "monitored_folders", []))
+
 
 
     # ── Internal ───────────────────────────────────────────────────────────
@@ -314,9 +348,12 @@ class CanaryGuardEngine:
 
 
     def _save_canary_list(self) -> None:
-        """Persist the current canary filename list back to config.json."""
+        """Persist the current canary lists and folders back to config.json."""
         self.logger.config["canary_files"] = list(self.manager.canary_filenames)
+        self.logger.config["custom_canaries"] = list(getattr(self.manager, "custom_canaries", []))
+        self.logger.config["monitored_folders"] = list(getattr(self.manager, "monitored_folders", []))
         self._save_config()
+
 
     def _save_config(self) -> None:
         """Write the current in-memory config back to config.json."""

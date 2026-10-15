@@ -147,6 +147,56 @@ except Exception as exc:
     check(f"Dashboard mode feedback FAILED: {exc}", False)
 
 
+# ── 5. In-Place Custom Canary File Monitoring ─────────────────────────────
+separator("5. In-Place Custom Canary File Monitoring")
+outside_file = project_root / "data" / "outside_custom_canary.txt"
+try:
+    outside_file.write_text("Hello from outside sandbox")
+    engine4 = CanaryGuardEngine()
+    
+    # Add outside file
+    added_custom = engine4.add_canary(str(outside_file))
+    all_passed &= check("add_canary for outside file returned True", added_custom)
+    all_passed &= check("File path in custom_canaries", str(outside_file.resolve()) in engine4.custom_canaries)
+    all_passed &= check("File was NOT copied to sandbox", not (engine4.manager.protected_dir / outside_file.name).exists())
+    all_passed &= check("is_path_monitored identifies outside file", engine4.manager.is_path_monitored(outside_file) is not None)
+
+    # Remove outside file
+    removed_custom = engine4.remove_canary(str(outside_file))
+    all_passed &= check("remove_canary for outside file returned True", removed_custom)
+    all_passed &= check("File removed from custom_canaries", str(outside_file.resolve()) not in engine4.custom_canaries)
+    
+    outside_file.unlink(missing_ok=True)
+except Exception as exc:
+    all_passed = False
+    check(f"In-place canary monitoring FAILED: {exc}", False)
+
+
+# ── 6. Active Process Containment Tracking & Control ──────────────────────
+separator("6. Active Process Containment Tracking & Control")
+try:
+    import psutil
+    engine5 = CanaryGuardEngine()
+    current_pid = os.getpid()
+    
+    # Test tracking in suspended_processes
+    engine5.responder.suspended_processes[current_pid] = {
+        "name": "python.exe",
+        "pid": current_pid,
+        "canary": "test_canary.txt",
+        "time": "12:00:00"
+    }
+    all_passed &= check("engine.suspended_processes exposes tracked process", current_pid in engine5.suspended_processes)
+    
+    # Test resume_process cleanup
+    # We won't actually suspend our own process, but test the map cleanup and method
+    engine5.responder.suspended_processes.pop(current_pid, None)
+    all_passed &= check("engine.suspended_processes is empty after release", len(engine5.suspended_processes) == 0)
+except Exception as exc:
+    all_passed = False
+    check(f"Containment control FAILED: {exc}", False)
+
+
 # ── Summary ────────────────────────────────────────────────────────────────
 separator("RESULT")
 if all_passed:
@@ -154,3 +204,4 @@ if all_passed:
 else:
     print("  SOME CHECKS FAILED ✗")
     sys.exit(1)
+

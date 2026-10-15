@@ -182,6 +182,20 @@ class FilesystemMonitor:
                 except Exception as e:
                     self.logger._console.warning(f"[MONITOR] Failed to watch folder {f_path}: {e}")
 
+        # 3. Schedule parent directories of in-place custom canary files
+        watched_parents = set()
+        for canary_str in getattr(self.manager, "custom_canaries", []):
+            try:
+                cp = Path(canary_str).resolve()
+                parent_dir = cp.parent
+                if parent_dir.exists() and str(parent_dir) not in watched_parents:
+                    watched_parents.add(str(parent_dir))
+                    w = self.observer.schedule(self._event_handler, str(parent_dir), recursive=False)
+                    self._watch_handles.append(w)
+            except Exception as e:
+                self.logger._console.warning(f"[MONITOR] Failed to watch canary parent dir {canary_str}: {e}")
+
+
     def stop(self):
         """Stop the watchdog observer."""
         if self.observer is not None:

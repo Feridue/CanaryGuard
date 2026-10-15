@@ -65,6 +65,10 @@ class ProcessCorrelator:
                     elif mb_written > 0.005:
                         score += 5.0
                         evidence.append(f"Small write I/O burst: {mb_written:.3f} MB")
+                    elif write_delta > 0:
+                        score += 5.0
+                        evidence.append(f"Active file write: {write_delta} bytes")
+
                     
                     # We only care about candidates that have at least some score
                     # (we don't want to list idle background processes)

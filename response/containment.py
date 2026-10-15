@@ -6,9 +6,11 @@ Uses PowerShell WinRT toasts for desktop notifications (reliable on Windows 10/1
 
 import subprocess
 import sys
+from datetime import datetime
 import psutil
 from typing import Dict, List, Any
 from evidence.logger import EvidenceLogger
+
 
 
 def _send_desktop_notification(title: str, message: str) -> None:
@@ -60,6 +62,8 @@ class Responder:
             "wininit.exe", "winlogon.exe", "lsass.exe", "services.exe", 
             "taskmgr.exe", "system", "system idle process"
         ])
+        # Track currently suspended processes: pid -> dict(name, pid, canary, time)
+        self.suspended_processes: Dict[int, Dict[str, Any]] = {}
         
     def _is_allowed(self, name: str) -> bool:
         if not name:
@@ -67,12 +71,19 @@ class Responder:
         name_lower = name.lower()
         return any(allowed.lower() == name_lower for allowed in self.allowlist)
         
-    def suspend_process(self, pid: int) -> bool:
-        """Suspends a running process by its PID."""
+    def suspend_process(self, pid: int, name: str = "Unknown", canary: str = "") -> bool:
+        """Suspends a running process by its PID and tracks it."""
         try:
             proc = psutil.Process(pid)
             proc.suspend()
-            self.logger.log_system_event(f"Suspended process PID {pid}")
+            pname = name if name != "Unknown" else proc.name()
+            self.suspended_processes[pid] = {
+                "name": pname,
+                "pid": pid,
+                "canary": canary,
+                "time": datetime.now().strftime("%H:%M:%S")
+            }
+            self.logger.log_system_event(f"Suspended process PID {pid} ({pname})")
             return True
         except (psutil.NoSuchProcess, psutil.AccessDenied) as e:
             self.logger.log_system_event(f"Failed to suspend PID {pid}: {e}")
@@ -83,10 +94,25 @@ class Responder:
         try:
             proc = psutil.Process(pid)
             proc.resume()
+            self.suspended_processes.pop(pid, None)
             self.logger.log_system_event(f"Resumed process PID {pid}")
             return True
         except (psutil.NoSuchProcess, psutil.AccessDenied) as e:
+            self.suspended_processes.pop(pid, None)
             self.logger.log_system_event(f"Failed to resume PID {pid}: {e}")
+            return False
+
+    def kill_process(self, pid: int) -> bool:
+        """Permanently terminates a suspended or hostile process by its PID."""
+        try:
+            proc = psutil.Process(pid)
+            proc.kill()
+            self.suspended_processes.pop(pid, None)
+            self.logger.log_system_event(f"Terminated process PID {pid}")
+            return True
+        except (psutil.NoSuchProcess, psutil.AccessDenied) as e:
+            self.suspended_processes.pop(pid, None)
+            self.logger.log_system_event(f"Failed to terminate PID {pid}: {e}")
             return False
 
     def handle_incident(self, incident: Dict[str, Any], candidates: List[Dict[str, Any]]) -> Dict[str, Any]:
@@ -97,12 +123,12 @@ class Responder:
         # Package candidates into the incident
         incident["candidates"] = candidates
         
+        # Format affected canary names for alert messages
+        canary_names = [c.get("canary_name", "") for c in incident.get("affected_canaries", [])]
+        canary_str = ", ".join(canary_names) if canary_names else incident.get("canary_affected", "Canary file")
+
         # Fire desktop notification (best-effort; never crashes the containment loop)
         try:
-            canary_name = "Unknown Canary"
-            if incident.get("affected_canaries"):
-                canary_name = incident["affected_canaries"][0].get("canary_name", "Unknown Canary")
-
             suspect_name = "Unknown"
             confidence   = "None"
             if candidates:
@@ -111,7 +137,7 @@ class Responder:
 
             _send_desktop_notification(
                 title   = "CanaryGuard Incident Detected",
-                message = f"Canary Tampered: {canary_name} | Suspect: {suspect_name} ({confidence})"
+                message = f"Canary Tampered: {canary_str} | Suspect: {suspect_name} ({confidence})"
             )
         except Exception as e:
             self.logger._console.error(f"[RESPONDER] Desktop notification failed: {e}")
@@ -127,19 +153,40 @@ class Responder:
             
             if top_suspect:
                 self.logger._console.warning(
-                    f"[OBSERVE MODE] Incident detected. Top suspect: {top_suspect.get('name')} "
+                    f"[OBSERVE MODE] Incident detected on {canary_str}. Top suspect: {top_suspect.get('name')} "
                     f"(PID {top_suspect.get('pid')}) with {top_suspect.get('confidence', 'Unknown')} confidence."
                 )
             else:
-                self.logger._console.warning("[OBSERVE MODE] Incident detected. No candidates found.")
+                self.logger._console.warning(f"[OBSERVE MODE] Incident detected on {canary_str}. No candidates found.")
                 
             self.logger._console.info("[OBSERVE MODE] No action taken.")
             
         elif mode == "Approval":
             if not candidates:
-                self.logger._console.info("[APPROVAL MODE] Incident detected, but no candidates found. No action taken.")
-                incident["decision"] = "denied"
+                self.logger._console.warning(f"[APPROVAL MODE] Incident detected on {canary_str}, but no candidate process was found.")
+                incident["decision"] = "unattributed"
                 incident["action_taken"] = "none"
+
+                # If running as GUI app without interactive stdin, inform operator via prompt
+                if not (sys.stdin and hasattr(sys.stdin, "isatty") and sys.stdin.isatty()):
+                    try:
+                        import tkinter as tk
+                        from tkinter import messagebox
+                        root = tk.Tk()
+                        root.withdraw()
+                        root.attributes("-topmost", True)
+                        messagebox.showwarning(
+                            "CanaryGuard — File Tampered",
+                            f"🚨 CanaryGuard Security Notice!\n\n"
+                            f"Affected File: {canary_str}\n\n"
+                            f"A file modification was detected, but no specific background process "
+                            f"exceeded the I/O attribution threshold (the editor may have made a micro-save or closed).\n\n"
+                            f"The incident has been recorded in the Activity Log.",
+                            icon="warning"
+                        )
+                        root.destroy()
+                    except Exception:
+                        pass
                 return incident
                 
             top_suspect = candidates[0]
@@ -151,7 +198,7 @@ class Responder:
             print("\n" + "="*60)
             print("  🚨 [APPROVAL REQUIRED] 🚨")
             print("="*60)
-            print(f"  Incident  : {incident.get('files_affected_count')} canary files tampered")
+            print(f"  Incident  : {incident.get('files_affected_count')} canary files tampered ({canary_str})")
             print(f"  Suspect   : {name} (PID: {pid})")
             print(f"  Confidence: {conf}")
             print(f"  Evidence  : {expl}")
@@ -159,10 +206,10 @@ class Responder:
             
             choice = "n"
             try:
-                if sys.stdin is not None:
+                if sys.stdin is not None and hasattr(sys.stdin, "isatty") and sys.stdin.isatty():
                     choice = input(f"\nSuspend process {name} (PID {pid})? (y/n): ").strip().lower()
                 else:
-                    raise EOFError("No stdin")
+                    raise EOFError("No interactive stdin")
             except (EOFError, OSError):
                 # Running as a background or GUI app without terminal stdin
                 try:
@@ -173,26 +220,50 @@ class Responder:
                     root.attributes("-topmost", True)
                     dialog_msg = (
                         f"🚨 CanaryGuard Ransomware Alert!\n\n"
-                        f"Incident: {incident.get('files_affected_count', 0)} canary file(s) tampered.\n"
-                        f"Suspect: {name} (PID {pid})\n"
-                        f"Confidence: {conf}\n\n"
+                        f"Affected File(s): {canary_str}\n"
+                        f"Suspect Process: {name} (PID {pid})\n"
+                        f"Confidence Level: {conf}\n\n"
                         f"Evidence:\n{expl}\n\n"
-                        f"Do you want to suspend this process immediately?"
+                        f"Do you want to SUSPEND this process immediately?"
                     )
                     approved = messagebox.askyesno(
                         "CanaryGuard — Approval Required",
                         dialog_msg,
                         icon="warning"
                     )
-                    root.destroy()
                     choice = "y" if approved else "n"
+                    
+                    if choice == "y":
+                        success = self.suspend_process(pid, name=name, canary=canary_str)
+                        if success:
+                            incident["decision"] = "approved"
+                            incident["action_taken"] = "suspended"
+                            messagebox.showinfo(
+                                "Process Suspended",
+                                f"✅ Process '{name}' (PID {pid}) has been SUSPENDED.\n\n"
+                                f"Its execution is frozen. You can review, resume, or terminate it from the CanaryGuard Dashboard."
+                            )
+                        else:
+                            incident["decision"] = "approved"
+                            incident["action_taken"] = "failed"
+                            messagebox.showerror(
+                                "Suspension Failed",
+                                f"❌ Could not suspend process '{name}' (PID {pid}).\n"
+                                f"The process may have already exited or requires administrative privileges."
+                            )
+                    else:
+                        self.logger._console.info("[APPROVAL MODE] Operator denied suspension.")
+                        incident["decision"] = "denied"
+                        incident["action_taken"] = "none"
+
+                    root.destroy()
+                    return incident
                 except Exception as exc:
                     self.logger._console.warning(f"[APPROVAL MODE] GUI prompt failed: {exc}, defaulting to deny.")
                     choice = "n"
 
-                
             if choice == 'y':
-                success = self.suspend_process(pid)
+                success = self.suspend_process(pid, name=name, canary=canary_str)
                 if success:
                     incident["decision"] = "approved"
                     incident["action_taken"] = "suspended"
@@ -232,7 +303,7 @@ class Responder:
                 
             # Both checks passed, execute automatic suspension
             self.logger._console.warning(f"[AUTOMATIC MODE] Threat criteria met. Automatically suspending {name} (PID {pid})...")
-            success = self.suspend_process(pid)
+            success = self.suspend_process(pid, name=name, canary=canary_str)
             
             if success:
                 incident["decision"] = "auto_suspended"
@@ -242,3 +313,4 @@ class Responder:
                 incident["action_taken"] = "failed"
             
         return incident
+

@@ -18,9 +18,11 @@ class CanaryManager:
         self.canary_filenames = self.logger.canary_files
         self.canary_file_types = self.logger.canary_file_types
         self.monitored_folders: list = list(self.logger.config.get("monitored_folders", []))
+        self.custom_canaries: list = list(self.logger.config.get("custom_canaries", []))
         
         # Maps original filename/path -> dict of baseline info (path, size, hash, mtime)
         self.baselines: Dict[str, Dict[str, Any]] = {}
+
 
         
     def plant_canaries(self) -> None:
@@ -119,6 +121,52 @@ class CanaryManager:
                 except OSError:
                     pass
 
+        # 3. Custom canary files monitored in-place
+        for canary_str in self.custom_canaries:
+            cp = Path(canary_str)
+            if cp.exists() and cp.is_file():
+                try:
+                    stat = cp.stat()
+                    self.baselines[str(cp.resolve())] = {
+                        "path": cp,
+                        "size": stat.st_size,
+                        "mtime": stat.st_mtime,
+                        "hash": self._hash_file(cp)
+                    }
+                except OSError:
+                    pass
+
+    def add_custom_canary(self, filepath: str) -> bool:
+        """Add an external file to be monitored directly in-place without copying."""
+        p = Path(filepath).resolve()
+        if not p.exists() or not p.is_file():
+            return False
+        p_str = str(p)
+        if p_str in self.custom_canaries:
+            return False
+
+        self.custom_canaries.append(p_str)
+        self.logger.config["custom_canaries"] = list(self.custom_canaries)
+        self._record_baseline()
+        self.logger.log_system_event(f"Custom canary file added in-place: {p_str}")
+        return True
+
+    def remove_custom_canary(self, filepath_or_name: str) -> bool:
+        """Remove an external custom canary from monitoring."""
+        matched = None
+        for c in self.custom_canaries:
+            if c == filepath_or_name or Path(c).name == filepath_or_name or str(Path(c).resolve()) == str(Path(filepath_or_name).resolve()):
+                matched = c
+                break
+        if not matched:
+            return False
+
+        self.custom_canaries.remove(matched)
+        self.logger.config["custom_canaries"] = list(self.custom_canaries)
+        self.baselines.pop(str(Path(matched).resolve()), None)
+        self.logger.log_system_event(f"Custom canary file removed: {matched}")
+        return True
+
     def add_folder(self, folderpath: str) -> bool:
         """Add a directory to monitor recursively."""
         p = Path(folderpath).resolve()
@@ -169,6 +217,14 @@ class CanaryManager:
             if str(resolved).startswith(str(self.protected_dir.resolve())):
                 return path.name
 
+        # In custom_canaries
+        for canary_str in self.custom_canaries:
+            try:
+                if resolved == Path(canary_str).resolve():
+                    return str(path)
+            except Exception:
+                pass
+
         # Inside any monitored folder
         for folder_str in self.monitored_folders:
             folder_p = Path(folder_str).resolve()
@@ -180,6 +236,7 @@ class CanaryManager:
                     return str(path)
 
         return None
+
 
     def verify_canary(self, original_name: str, current_path: Optional[Path] = None) -> str:
         """

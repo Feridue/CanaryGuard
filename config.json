@@ -20,6 +20,7 @@
     ".txt"
   ],
   "monitored_folders": [],
+  "custom_canaries": [],
   "event_grouping_window": 1,
   "confidence_thresholds": {
     "low": 20,

@@ -111,20 +111,26 @@ class CanaryGuardDashboard:
         self.notebook.add(self.incident_tab, text="🚨 Incident Feed")
         self._build_incident_tab()
 
-        # Tab 2: Canary Decoy Files & Folders
+        # Tab 2: Active Containments / Suspended Threats
+        self.containment_tab = ttk.Frame(self.notebook, padding=8)
+        self.notebook.add(self.containment_tab, text="🛑 Suspended Threats")
+        self._build_containment_tab()
+
+        # Tab 3: Canary Decoy Files & Folders
         self.canary_tab = ttk.Frame(self.notebook, padding=8)
         self.notebook.add(self.canary_tab, text="📁 Canary Files & Folders")
         self._build_canary_tab()
 
-        # Tab 3: System & Activity Logs
+        # Tab 4: System & Activity Logs
         self.logs_tab = ttk.Frame(self.notebook, padding=8)
         self.notebook.add(self.logs_tab, text="📋 Activity Logs")
         self._build_logs_tab()
 
-        # Tab 4: Settings
+        # Tab 5: Settings
         self.settings_tab = ttk.Frame(self.notebook, padding=8)
         self.notebook.add(self.settings_tab, text="⚙️ Settings")
         self._build_settings_tab()
+
 
 
     # ── Tab 1: Incident Feed ────────────────────────────────────────────────
@@ -169,8 +175,48 @@ class CanaryGuardDashboard:
         self.detail_text.insert(tk.END, "Select an incident above to inspect forensic correlation and evidence details.")
         self.detail_text.configure(state="disabled")
 
-    # ── Tab 2: Canary Files ─────────────────────────────────────────────────
+    # ── Tab 2: Suspended Processes (Containment) ───────────────────────────
+    def _build_containment_tab(self):
+        info_label = ttk.Label(
+            self.containment_tab,
+            text="Processes currently frozen / contained by CanaryGuard at the OS level:",
+            font=("Segoe UI", 9, "bold")
+        )
+        info_label.pack(anchor=tk.W, pady=(0, 6))
+
+        # Containment Treeview
+        tree_frame = ttk.Frame(self.containment_tab)
+        tree_frame.pack(fill=tk.BOTH, expand=True)
+
+        cols = ("pid", "name", "canary", "time")
+        self.containment_tree = ttk.Treeview(tree_frame, columns=cols, show="headings", height=10)
+        self.containment_tree.heading("pid", text="PID")
+        self.containment_tree.heading("name", text="Process Name")
+        self.containment_tree.heading("canary", text="Tampered Canary / Target")
+        self.containment_tree.heading("time", text="Contained At")
+
+        self.containment_tree.column("pid", width=90, anchor=tk.CENTER)
+        self.containment_tree.column("name", width=180)
+        self.containment_tree.column("canary", width=320)
+        self.containment_tree.column("time", width=110, anchor=tk.CENTER)
+
+        c_scroll = ttk.Scrollbar(tree_frame, orient=tk.VERTICAL, command=self.containment_tree.yview)
+        self.containment_tree.configure(yscrollcommand=c_scroll.set)
+
+        self.containment_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        c_scroll.pack(side=tk.RIGHT, fill=tk.Y)
+
+        # Control buttons
+        btn_bar = ttk.Frame(self.containment_tab, padding=(0, 8, 0, 0))
+        btn_bar.pack(fill=tk.X)
+
+        ttk.Button(btn_bar, text="▶ Resume Process (Unfreeze)", command=self._resume_selected_process).pack(side=tk.LEFT, padx=4)
+        ttk.Button(btn_bar, text="☠ Terminate / Kill Process", command=self._kill_selected_process).pack(side=tk.LEFT, padx=4)
+        ttk.Button(btn_bar, text="🔄 Refresh List", command=self._refresh_containment_list).pack(side=tk.RIGHT, padx=4)
+
+    # ── Tab 3: Canary Files & Folders ───────────────────────────────────────
     def _build_canary_tab(self):
+
         # Path info
         path_box = ttk.LabelFrame(self.canary_tab, text="Protected Sandbox Folder", padding=8)
         path_box.pack(fill=tk.X, pady=(0, 8))
@@ -327,15 +373,18 @@ class CanaryGuardDashboard:
         chosen_file = filedialog.askopenfilename(
             title="Select File to Monitor as Canary",
             initialdir=str(Path.home()),
-            filetypes=[("Documents & Data", "*.docx *.xlsx *.pdf *.txt *.zip"), ("All Files", "*.*")]
+            filetypes=[("Documents & Data", "*.docx *.xlsx *.pdf *.txt *.zip *.csv *.json"), ("All Files", "*.*")]
         )
         if chosen_file:
             success = self.engine.add_canary(chosen_file)
             if success:
                 self._refresh_canary_list()
-                messagebox.showinfo("Success", f"File '{Path(chosen_file).name}' added to protected canary list.")
+                messagebox.showinfo(
+                    "Canary Protected",
+                    f"File '{Path(chosen_file).name}' is now protected and monitored in-place directly at:\n{chosen_file}"
+                )
             else:
-                messagebox.showwarning("Notice", "This file is already monitored as a canary.")
+                messagebox.showwarning("Notice", "This file is already monitored or could not be accessed.")
 
     def _add_folder_dialog(self):
         chosen_folder = filedialog.askdirectory(
@@ -363,9 +412,15 @@ class CanaryGuardDashboard:
             if confirm:
                 self.engine.remove_folder(folder_path)
                 self._refresh_canary_list()
+        elif item_text.startswith("📄 [Protected File] "):
+            file_path = item_text.replace("📄 [Protected File] ", "").strip()
+            confirm = messagebox.askyesno("Confirm Removal", f"Stop monitoring file '{file_path}'?\n(The file itself will NOT be deleted)")
+            if confirm:
+                self.engine.remove_canary(file_path)
+                self._refresh_canary_list()
         else:
-            filename = item_text.replace("📄 ", "").strip()
-            confirm = messagebox.askyesno("Confirm Removal", f"Stop monitoring '{filename}'?\n(The file itself will not be deleted)")
+            filename = item_text.replace("🐤 [Decoy Sandbox] ", "").replace("📄 ", "").strip()
+            confirm = messagebox.askyesno("Confirm Removal", f"Stop monitoring decoy '{filename}'?\n(The file itself will NOT be deleted)")
             if confirm:
                 self.engine.remove_canary(filename)
                 self._refresh_canary_list()
@@ -390,9 +445,61 @@ class CanaryGuardDashboard:
         # Show monitored folders first
         for folder_path in self.engine.monitored_folders:
             self.canary_listbox.insert(tk.END, f"📁 [Folder] {folder_path}")
-        # Show canary files
+        # Show custom in-place canary files
+        for custom_path in getattr(self.engine, "custom_canaries", []):
+            self.canary_listbox.insert(tk.END, f"📄 [Protected File] {custom_path}")
+        # Show sandbox decoys
         for fname in self.engine.canary_files:
-            self.canary_listbox.insert(tk.END, f"📄 {fname}")
+            self.canary_listbox.insert(tk.END, f"🐤 [Decoy Sandbox] {fname}")
+
+    def _refresh_containment_list(self):
+        if not hasattr(self, "containment_tree"):
+            return
+        for item in self.containment_tree.get_children():
+            self.containment_tree.delete(item)
+        suspended = getattr(self.engine, "suspended_processes", {})
+        for pid, info in suspended.items():
+            self.containment_tree.insert(
+                "",
+                tk.END,
+                values=(pid, info.get("name", "Unknown"), info.get("canary", "Unknown"), info.get("time", "-"))
+            )
+
+    def _resume_selected_process(self):
+        selected = self.containment_tree.selection()
+        if not selected:
+            messagebox.showinfo("Select Process", "Please select a suspended process from the list.")
+            return
+        item_vals = self.containment_tree.item(selected[0], "values")
+        pid = int(item_vals[0])
+        pname = item_vals[1]
+
+        confirm = messagebox.askyesno("Resume Process", f"Unfreeze and resume execution for '{pname}' (PID {pid})?")
+        if confirm:
+            success = self.engine.resume_process(pid)
+            self._refresh_containment_list()
+            if success:
+                messagebox.showinfo("Resumed", f"Process '{pname}' (PID {pid}) has been un-suspended.")
+            else:
+                messagebox.showerror("Error", f"Could not resume PID {pid}. It may have already exited.")
+
+    def _kill_selected_process(self):
+        selected = self.containment_tree.selection()
+        if not selected:
+            messagebox.showinfo("Select Process", "Please select a suspended process from the list.")
+            return
+        item_vals = self.containment_tree.item(selected[0], "values")
+        pid = int(item_vals[0])
+        pname = item_vals[1]
+
+        confirm = messagebox.askyesno("Terminate Process", f"Are you sure you want to PERMANENTLY TERMINATE '{pname}' (PID {pid})?")
+        if confirm:
+            success = self.engine.kill_process(pid)
+            self._refresh_containment_list()
+            if success:
+                messagebox.showinfo("Terminated", f"Process '{pname}' (PID {pid}) has been killed.")
+            else:
+                messagebox.showerror("Error", f"Could not terminate PID {pid}.")
 
     def _refresh_logs_display(self):
         if not hasattr(self, "log_text"):
@@ -407,6 +514,7 @@ class CanaryGuardDashboard:
     def _refresh_all(self):
         self._update_status_display()
         self._refresh_canary_list()
+        self._refresh_containment_list()
         self._refresh_logs_display()
         # Clear and reload incident rows from engine.recent_incidents
         for item in self.tree.get_children():
@@ -421,6 +529,8 @@ class CanaryGuardDashboard:
         """Thread-safe UI update when an incident occurs."""
         self.root.after(0, self._insert_incident_row, incident)
         self.root.after(0, self._refresh_logs_display)
+        self.root.after(0, self._refresh_containment_list)
+
 
     def _insert_incident_row(self, inc: dict):
         # Format timestamp
