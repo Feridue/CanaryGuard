@@ -123,6 +123,10 @@ Testing is an important part of evaluating CanaryGuard's behavior. The project i
 Testing should be conducted in an isolated, authorized environment. Test results should be reviewed to assess detection behavior, expected responses, and potential limitations.
 
 
+Watch the video demonstrating our project, its key features, and how it works.
+
+https://drive.google.com/file/d/11fE-jea8UAM4uDKIT2YOFzPPuVm2Wcba/view?usp=sharing
+
        ## Team Information:  full names and CTC IDs
 1,  Haymanot Matebe : CTC-156-26
 2, Teklu Kidanemaryam: CTC-4826-26
