@@ -123,6 +123,10 @@ Testing is an important part of evaluating CanaryGuard's behavior. The project i
 Testing should be conducted in an isolated, authorized environment. Test results should be reviewed to assess detection behavior, expected responses, and potential limitations.
 
 
-## Disclaimer
-
-This project is intended for educational purposes and authorized defensive cybersecurity research. Run simulations and response tests only in controlled environments where you have permission to conduct them.
+       ## Team Information:  full names and CTC IDs
+1,  Haymanot Matebe : CTC-156-26
+2, Teklu Kidanemaryam: CTC-4826-26
+3, Surafel Habtewold :CTC-287-26
+4, Marta Kefale : CTC-1772-26
+5, Ferid Yusuf :CTC-1594-26
+6, Rebira Likisa :CTC-1864-26
