@@ -149,6 +149,7 @@ https://drive.google.com/file/d/11fE-jea8UAM4uDKIT2YOFzPPuVm2Wcba/view?usp=shari
 
 **Ferid Yusuf: Contribution** (https://drive.google.com/file/d/1WTMKAiPOMWaKZfG5wF4c2xd-GfgihC86/view?usp=sharing)
 
+**Haymanot Matebe: Contribution** (https://drive.google.com/file/d/1SQSa98iAISCO4ASQPR5OfDrDRByRsIdi/view?usp=sharing)
 
 ## Team Information:  full names and CTC IDs
 1, Haymanot Matebe : CTC-156-26
